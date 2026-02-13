@@ -56,7 +56,6 @@ wss.on("connection", (ws) => {
       const proc = spawn("claude", args, {
         env: { ...process.env, FORCE_COLOR: "0" },
         stdio: ["pipe", "pipe", "pipe"],
-        shell: true,
       });
 
       activeProcess = proc;
