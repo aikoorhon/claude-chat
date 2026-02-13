@@ -43,7 +43,7 @@ wss.on("connection", (ws) => {
 
       // Add system prompt if provided
       if (msg.systemPrompt) {
-        args.push("--system-prompt", msg.systemPrompt);
+        args.push("--append-system-prompt", msg.systemPrompt);
       }
 
       // Resume session if provided
