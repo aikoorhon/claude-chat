@@ -54,7 +54,7 @@ wss.on("connection", (ws) => {
       console.log(`Spawning claude: ${msg.prompt.slice(0, 50)}...`);
 
       const proc = spawn("claude", args, {
-        env: { ...process.env, FORCE_COLOR: "0" },
+        env: { ...process.env, FORCE_COLOR: "0", PATH: process.env.PATH },
         stdio: ["pipe", "pipe", "pipe"],
       });
 
@@ -63,7 +63,9 @@ wss.on("connection", (ws) => {
       let buffer = "";
 
       proc.stdout.on("data", (chunk) => {
-        buffer += chunk.toString();
+        const text = chunk.toString();
+        console.log(`[stdout] ${text.slice(0, 100)}...`);
+        buffer += text;
         // stream-json outputs one JSON object per line
         const lines = buffer.split("\n");
         buffer = lines.pop(); // keep incomplete line in buffer
@@ -74,14 +76,14 @@ wss.on("connection", (ws) => {
             const event = JSON.parse(line);
             ws.send(JSON.stringify(event));
           } catch {
-            // skip unparseable lines
+            console.log(`[parse-fail] ${line.slice(0, 100)}`);
           }
         }
       });
 
       proc.stderr.on("data", (chunk) => {
         const text = chunk.toString();
-        // Filter out noise, forward real errors
+        console.log(`[stderr] ${text}`);
         if (
           text.includes("Error") ||
           text.includes("error") ||
