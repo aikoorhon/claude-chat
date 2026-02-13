@@ -31,6 +31,28 @@
       color: #fff;
     }
 
+    #project-select {
+      background: #2a2a2a;
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 6px 10px;
+      color: #e0e0e0;
+      font-size: 13px;
+    }
+
+    #new-chat-btn {
+      background: #333;
+      color: #ccc;
+      border: 1px solid #555;
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      margin-left: auto;
+    }
+
+    #new-chat-btn:hover { background: #444; color: #fff; }
+
     #status {
       font-size: 12px;
       color: #888;
@@ -38,34 +60,6 @@
 
     #status.connected { color: #4ade80; }
     #status.error { color: #f87171; }
-
-    #system-prompt-bar {
-      padding: 8px 20px;
-      border-bottom: 1px solid #333;
-      background: #1e1e1e;
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-
-    #system-prompt-bar label {
-      font-size: 12px;
-      color: #888;
-      white-space: nowrap;
-    }
-
-    #system-prompt {
-      flex: 1;
-      background: #2a2a2a;
-      border: 1px solid #444;
-      border-radius: 6px;
-      padding: 6px 10px;
-      color: #e0e0e0;
-      font-size: 13px;
-      font-family: inherit;
-    }
-
-    #system-prompt:focus { outline: none; border-color: #d4a574; }
 
     #messages {
       flex: 1;
@@ -98,26 +92,6 @@
       background: #2a2a2a;
       border: 1px solid #333;
       border-bottom-left-radius: 4px;
-    }
-
-    .message.assistant code {
-      background: #1a1a1a;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 13px;
-    }
-
-    .message.assistant pre {
-      background: #1a1a1a;
-      padding: 12px;
-      border-radius: 8px;
-      margin: 8px 0;
-      overflow-x: auto;
-    }
-
-    .message.assistant pre code {
-      background: none;
-      padding: 0;
     }
 
     .message.error {
@@ -200,35 +174,18 @@
     }
 
     #cancel-btn.active { display: block; }
-
-    #new-chat-btn {
-      background: #333;
-      color: #ccc;
-      border: 1px solid #555;
-      border-radius: 8px;
-      padding: 6px 14px;
-      font-size: 13px;
-      cursor: pointer;
-      margin-left: auto;
-    }
-
-    #new-chat-btn:hover { background: #444; color: #fff; }
   </style>
 </head>
 <body>
   <header>
-    <h1>Claude Chat <span style="color:#888;font-weight:400;font-size:13px">spike</span></h1>
+    <h1>Claude Chat</h1>
+    <select id="project-select"></select>
     <button id="new-chat-btn">New Chat</button>
     <span id="status">connecting…</span>
   </header>
 
-  <div id="system-prompt-bar">
-    <label>System prompt:</label>
-    <input id="system-prompt" type="text" placeholder="Optional — e.g. 'You are a design systems expert'" />
-  </div>
-
   <div id="messages">
-    <div class="message system">Send a message to test Claude Code integration</div>
+    <div class="message system">Pick a project and start chatting</div>
   </div>
 
   <div id="streaming-indicator">Claude is thinking…</div>
@@ -240,19 +197,37 @@
   </div>
 
   <script>
-    const messages = document.getElementById('messages');
+    const messagesEl = document.getElementById('messages');
     const input = document.getElementById('prompt-input');
     const sendBtn = document.getElementById('send-btn');
     const cancelBtn = document.getElementById('cancel-btn');
     const statusEl = document.getElementById('status');
     const indicator = document.getElementById('streaming-indicator');
-    const systemPromptInput = document.getElementById('system-prompt');
+    const projectSelect = document.getElementById('project-select');
 
     let ws;
     let isStreaming = false;
     let currentAssistantEl = null;
     let currentText = '';
-    let lastSessionId = null;
+
+    // Load projects
+    async function loadProjects() {
+      const res = await fetch('/api/projects');
+      const projects = await res.json();
+      projectSelect.innerHTML = projects
+        .map(p => `<option value="${p.id}">${p.name}</option>`)
+        .join('');
+    }
+
+    loadProjects();
+
+    // Reset chat when switching projects
+    projectSelect.addEventListener('change', () => {
+      ws.send(JSON.stringify({ type: 'new-session' }));
+      messagesEl.innerHTML = `<div class="message system">Switched to project: ${projectSelect.value}</div>`;
+      currentAssistantEl = null;
+      currentText = '';
+    });
 
     function connect() {
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -276,18 +251,14 @@
     }
 
     function handleEvent(event) {
-      // Claude Code stream-json events
       switch (event.type) {
         case 'system':
-          // Session info — capture session ID
           if (event.session_id) {
-            lastSessionId = event.session_id;
             addSystemMessage(`Session: ${event.session_id.slice(0, 8)}…`);
           }
           break;
 
         case 'assistant':
-          // Assistant message with content blocks
           if (event.message?.content) {
             for (const block of event.message.content) {
               if (block.type === 'text') {
@@ -298,22 +269,14 @@
           break;
 
         case 'content_block_delta':
-          // Streaming text delta
           if (event.delta?.type === 'text_delta') {
             appendAssistantText(event.delta.text);
           }
           break;
 
         case 'result':
-          // Final result
-          if (event.result) {
-            // If we haven't started an assistant message yet, show the result
-            if (!currentAssistantEl) {
-              appendAssistantText(event.result);
-            }
-            if (event.session_id) {
-              lastSessionId = event.session_id;
-            }
+          if (event.result && !currentAssistantEl) {
+            appendAssistantText(event.result);
           }
           finishStreaming();
           break;
@@ -327,9 +290,11 @@
           finishStreaming();
           break;
 
+        case 'session-cleared':
+          break;
+
         default:
-          // Log unknown events for debugging
-          console.log('Unknown event:', event);
+          console.log('Event:', event);
       }
     }
 
@@ -337,34 +302,35 @@
       if (!currentAssistantEl) {
         currentAssistantEl = document.createElement('div');
         currentAssistantEl.className = 'message assistant';
-        messages.appendChild(currentAssistantEl);
+        messagesEl.appendChild(currentAssistantEl);
         currentText = '';
+        indicator.classList.remove('active');
       }
       currentText += text;
       currentAssistantEl.textContent = currentText;
-      messages.scrollTop = messages.scrollHeight;
+      messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
     function addUserMessage(text) {
       const el = document.createElement('div');
       el.className = 'message user';
       el.textContent = text;
-      messages.appendChild(el);
-      messages.scrollTop = messages.scrollHeight;
+      messagesEl.appendChild(el);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
     function addSystemMessage(text) {
       const el = document.createElement('div');
       el.className = 'message system';
       el.textContent = text;
-      messages.appendChild(el);
+      messagesEl.appendChild(el);
     }
 
     function addErrorMessage(text) {
       const el = document.createElement('div');
       el.className = 'message error';
       el.textContent = text;
-      messages.appendChild(el);
+      messagesEl.appendChild(el);
     }
 
     function startStreaming() {
@@ -391,23 +357,19 @@
       addUserMessage(prompt);
       startStreaming();
 
-      const payload = { type: 'prompt', prompt };
+      ws.send(JSON.stringify({
+        type: 'prompt',
+        prompt,
+        projectId: projectSelect.value,
+      }));
 
-      const sp = systemPromptInput.value.trim();
-      if (sp) payload.systemPrompt = sp;
-
-      // For conversation continuity, pass session ID after first message
-      // (disabled for spike — each message is independent)
-      // if (lastSessionId) payload.sessionId = lastSessionId;
-
-      ws.send(JSON.stringify(payload));
       input.value = '';
       autoResize();
     }
 
     document.getElementById('new-chat-btn').onclick = () => {
       ws.send(JSON.stringify({ type: 'new-session' }));
-      messages.innerHTML = '<div class="message system">New conversation started</div>';
+      messagesEl.innerHTML = '<div class="message system">New conversation started</div>';
       currentAssistantEl = null;
       currentText = '';
     };
@@ -427,7 +389,6 @@
       }
     });
 
-    // Auto-resize textarea
     function autoResize() {
       input.style.height = 'auto';
       input.style.height = Math.min(input.scrollHeight, 200) + 'px';

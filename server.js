@@ -4,23 +4,67 @@ import { spawn } from "child_process";
 import { createServer } from "http";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
+// Projects live here
+const PROJECTS_DIR = join(__dirname, "projects");
+mkdirSync(PROJECTS_DIR, { recursive: true });
+
+// Create a default project if none exist
+const defaultProject = join(PROJECTS_DIR, "general");
+if (!existsSync(defaultProject)) {
+  mkdirSync(defaultProject, { recursive: true });
+  writeFileSync(join(defaultProject, "CLAUDE.md"), "# General\n\nGeneral-purpose assistant. No specific project context.\n");
+}
+
 app.use(express.static(join(__dirname, "public")));
+
+// API: list projects
+app.get("/api/projects", (req, res) => {
+  const projects = readdirSync(PROJECTS_DIR, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .map(d => {
+      const claudeMd = join(PROJECTS_DIR, d.name, "CLAUDE.md");
+      const hasContext = existsSync(claudeMd);
+      return {
+        id: d.name,
+        name: d.name,
+        hasContext,
+      };
+    });
+  res.json(projects);
+});
+
+// API: get project CLAUDE.md
+app.get("/api/projects/:id/context", (req, res) => {
+  const claudeMd = join(PROJECTS_DIR, req.params.id, "CLAUDE.md");
+  if (existsSync(claudeMd)) {
+    res.json({ content: readFileSync(claudeMd, "utf-8") });
+  } else {
+    res.json({ content: "" });
+  }
+});
 
 wss.on("connection", (ws) => {
   console.log("Client connected");
   let claudeProc = null;
   let buffer = "";
 
-  function startClaude(systemPrompt) {
+  function startClaude(projectId) {
     if (claudeProc) {
       claudeProc.kill("SIGINT");
       claudeProc = null;
+    }
+
+    const projectDir = join(PROJECTS_DIR, projectId);
+    if (!existsSync(projectDir)) {
+      ws.send(JSON.stringify({ type: "error", error: `Project "${projectId}" not found` }));
+      return;
     }
 
     const args = [
@@ -30,15 +74,10 @@ wss.on("connection", (ws) => {
       "--verbose",
     ];
 
-    const defaultInstruction = "Respond directly. Never start responses with preambles like 'Based on...' or 'From what you told me...' — just answer the question.";
-    const fullPrompt = systemPrompt
-      ? `${defaultInstruction}\n\n${systemPrompt}`
-      : defaultInstruction;
-    args.push("--append-system-prompt", fullPrompt);
-
-    console.log("[claude] Starting process...");
+    console.log(`[claude] Starting in project: ${projectId}`);
 
     claudeProc = spawn("claude", args, {
+      cwd: projectDir,
       env: { ...process.env, FORCE_COLOR: "0" },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -58,22 +97,19 @@ wss.on("connection", (ws) => {
           console.log(`[event] ${event.type}${event.subtype ? ":" + event.subtype : ""}`);
           ws.send(JSON.stringify(event));
         } catch {
-          console.log(`[parse-fail] ${line.slice(0, 100)}`);
+          // skip
         }
       }
     });
 
     claudeProc.stderr.on("data", (chunk) => {
-      const text = chunk.toString();
-      console.log(`[stderr] ${text.trim()}`);
+      console.log(`[stderr] ${chunk.toString().trim()}`);
     });
 
     claudeProc.on("close", (code) => {
       console.log(`[claude] Process exited (code ${code})`);
       if (buffer.trim()) {
-        try {
-          ws.send(JSON.stringify(JSON.parse(buffer)));
-        } catch {}
+        try { ws.send(JSON.stringify(JSON.parse(buffer))); } catch {}
       }
       claudeProc = null;
     });
@@ -105,12 +141,11 @@ wss.on("connection", (ws) => {
     }
 
     if (msg.type === "prompt") {
-      // Start Claude process on first message
+      // Start Claude in project directory on first message
       if (!claudeProc) {
-        startClaude(msg.systemPrompt);
+        startClaude(msg.projectId || "general");
       }
 
-      // Send message as stream-json input (Anthropic message format)
       const input = JSON.stringify({
         type: "user",
         message: {
@@ -141,4 +176,5 @@ wss.on("connection", (ws) => {
 const PORT = process.env.PORT || 3456;
 server.listen(PORT, () => {
   console.log(`Claude Chat running at http://localhost:${PORT}`);
+  console.log(`Projects directory: ${PROJECTS_DIR}`);
 });
