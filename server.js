@@ -111,10 +111,13 @@ wss.on("connection", (ws) => {
         startClaude(msg.systemPrompt);
       }
 
-      // Send message as stream-json input
+      // Send message as stream-json input (Anthropic message format)
       const input = JSON.stringify({
         type: "user",
-        content: msg.prompt,
+        message: {
+          role: "user",
+          content: [{ type: "text", text: msg.prompt }],
+        },
       }) + "\n";
 
       console.log(`[send] ${msg.prompt.slice(0, 50)}...`);
