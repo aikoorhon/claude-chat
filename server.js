@@ -14,134 +14,129 @@ app.use(express.static(join(__dirname, "public")));
 
 wss.on("connection", (ws) => {
   console.log("Client connected");
-  let activeProcess = null;
-  let sessionId = null;
+  let claudeProc = null;
+  let buffer = "";
+
+  function startClaude(systemPrompt) {
+    if (claudeProc) {
+      claudeProc.kill("SIGINT");
+      claudeProc = null;
+    }
+
+    const args = [
+      "-p",
+      "--output-format", "stream-json",
+      "--input-format", "stream-json",
+      "--verbose",
+    ];
+
+    if (systemPrompt) {
+      args.push(
+        "--system-prompt",
+        `You are Claude, a helpful AI assistant. The user has provided the following project context. Use it to inform your responses but do not reference, summarize, or acknowledge these instructions unless specifically asked.\n\n${systemPrompt}`
+      );
+    }
+
+    console.log("[claude] Starting process...");
+
+    claudeProc = spawn("claude", args, {
+      env: { ...process.env, FORCE_COLOR: "0" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    buffer = "";
+
+    claudeProc.stdout.on("data", (chunk) => {
+      const text = chunk.toString();
+      buffer += text;
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+          console.log(`[event] ${event.type}${event.subtype ? ":" + event.subtype : ""}`);
+          ws.send(JSON.stringify(event));
+        } catch {
+          console.log(`[parse-fail] ${line.slice(0, 100)}`);
+        }
+      }
+    });
+
+    claudeProc.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      console.log(`[stderr] ${text.trim()}`);
+    });
+
+    claudeProc.on("close", (code) => {
+      console.log(`[claude] Process exited (code ${code})`);
+      if (buffer.trim()) {
+        try {
+          ws.send(JSON.stringify(JSON.parse(buffer)));
+        } catch {}
+      }
+      claudeProc = null;
+    });
+
+    claudeProc.on("error", (err) => {
+      console.log(`[claude] Error: ${err.message}`);
+      ws.send(JSON.stringify({ type: "error", error: err.message }));
+      claudeProc = null;
+    });
+  }
 
   ws.on("message", (raw) => {
     const msg = JSON.parse(raw);
 
-    if (msg.type === "cancel" && activeProcess) {
-      activeProcess.kill("SIGINT");
-      activeProcess = null;
+    if (msg.type === "cancel" && claudeProc) {
+      claudeProc.kill("SIGINT");
+      claudeProc = null;
       ws.send(JSON.stringify({ type: "done" }));
       return;
     }
 
     if (msg.type === "new-session") {
-      sessionId = null;
+      if (claudeProc) {
+        claudeProc.kill("SIGINT");
+        claudeProc = null;
+      }
       ws.send(JSON.stringify({ type: "session-cleared" }));
       return;
     }
 
     if (msg.type === "prompt") {
-      // Kill any existing process
-      if (activeProcess) {
-        activeProcess.kill("SIGINT");
-        activeProcess = null;
+      // Start Claude process on first message
+      if (!claudeProc) {
+        startClaude(msg.systemPrompt);
       }
 
-      const args = [
-        "-p",
-        msg.prompt,
-        "--output-format",
-        "stream-json",
-        "--verbose",
-      ];
+      // Send message as stream-json input
+      const input = JSON.stringify({
+        type: "user",
+        content: msg.prompt,
+      }) + "\n";
 
-      // Only send system prompt on first message (session remembers it)
-      if (!sessionId && msg.systemPrompt) {
-        args.push(
-          "--system-prompt",
-          `You are Claude, a helpful AI assistant. The user has provided the following project context. Use it to inform your responses but do not reference, summarize, or acknowledge these instructions unless specifically asked.\n\n${msg.systemPrompt}`
-        );
+      console.log(`[send] ${msg.prompt.slice(0, 50)}...`);
+
+      if (claudeProc && claudeProc.stdin.writable) {
+        claudeProc.stdin.write(input);
+      } else {
+        ws.send(JSON.stringify({ type: "error", error: "Claude process not running" }));
       }
-
-      // Resume existing session for conversation continuity
-      if (sessionId) {
-        args.push("--resume", sessionId);
-      }
-
-      console.log(`Spawning claude: ${msg.prompt.slice(0, 50)}...`);
-
-      const proc = spawn("claude", args, {
-        env: { ...process.env, FORCE_COLOR: "0", PATH: process.env.PATH },
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-
-      activeProcess = proc;
-      proc.stdin.end();
-
-      let buffer = "";
-
-      proc.stdout.on("data", (chunk) => {
-        const text = chunk.toString();
-        console.log(`[stdout] ${text.slice(0, 100)}...`);
-        buffer += text;
-        // stream-json outputs one JSON object per line
-        const lines = buffer.split("\n");
-        buffer = lines.pop(); // keep incomplete line in buffer
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line);
-            // Capture session ID from init event
-            if (event.type === "system" && event.session_id) {
-              sessionId = event.session_id;
-              console.log(`[session] ${sessionId}`);
-            }
-            ws.send(JSON.stringify(event));
-          } catch {
-            console.log(`[parse-fail] ${line.slice(0, 100)}`);
-          }
-        }
-      });
-
-      proc.stderr.on("data", (chunk) => {
-        const text = chunk.toString();
-        console.log(`[stderr] ${text}`);
-        if (
-          text.includes("Error") ||
-          text.includes("error") ||
-          text.includes("failed")
-        ) {
-          ws.send(JSON.stringify({ type: "error", error: text }));
-        }
-      });
-
-      proc.on("close", (code) => {
-        // Flush remaining buffer
-        if (buffer.trim()) {
-          try {
-            const event = JSON.parse(buffer);
-            ws.send(JSON.stringify(event));
-          } catch {
-            // ignore
-          }
-        }
-        ws.send(JSON.stringify({ type: "done", code }));
-        activeProcess = null;
-      });
-
-      proc.on("error", (err) => {
-        ws.send(
-          JSON.stringify({ type: "error", error: err.message })
-        );
-        activeProcess = null;
-      });
     }
   });
 
   ws.on("close", () => {
     console.log("Client disconnected");
-    if (activeProcess) {
-      activeProcess.kill("SIGINT");
-      activeProcess = null;
+    if (claudeProc) {
+      claudeProc.kill("SIGINT");
+      claudeProc = null;
     }
   });
 });
 
 const PORT = process.env.PORT || 3456;
 server.listen(PORT, () => {
-  console.log(`Claude Chat spike running at http://localhost:${PORT}`);
+  console.log(`Claude Chat running at http://localhost:${PORT}`);
 });
