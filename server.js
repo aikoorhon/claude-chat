@@ -30,9 +30,11 @@ wss.on("connection", (ws) => {
       "--verbose",
     ];
 
-    if (systemPrompt) {
-      args.push("--append-system-prompt", systemPrompt);
-    }
+    const defaultInstruction = "Respond directly. Never start responses with preambles like 'Based on...' or 'From what you told me...' — just answer the question.";
+    const fullPrompt = systemPrompt
+      ? `${defaultInstruction}\n\n${systemPrompt}`
+      : defaultInstruction;
+    args.push("--append-system-prompt", fullPrompt);
 
     console.log("[claude] Starting process...");
 
