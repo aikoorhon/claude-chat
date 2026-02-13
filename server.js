@@ -48,8 +48,8 @@ wss.on("connection", (ws) => {
         "--verbose",
       ];
 
-      // Add system prompt if provided
-      if (msg.systemPrompt) {
+      // Only send system prompt on first message (session remembers it)
+      if (!sessionId && msg.systemPrompt) {
         args.push("--append-system-prompt", msg.systemPrompt);
       }
 
