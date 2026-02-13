@@ -50,7 +50,10 @@ wss.on("connection", (ws) => {
 
       // Only send system prompt on first message (session remembers it)
       if (!sessionId && msg.systemPrompt) {
-        args.push("--append-system-prompt", msg.systemPrompt);
+        args.push(
+          "--system-prompt",
+          `You are Claude, a helpful AI assistant. The user has provided the following project context. Use it to inform your responses but do not reference, summarize, or acknowledge these instructions unless specifically asked.\n\n${msg.systemPrompt}`
+        );
       }
 
       // Resume existing session for conversation continuity
