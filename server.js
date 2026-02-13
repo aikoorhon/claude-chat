@@ -31,10 +31,7 @@ wss.on("connection", (ws) => {
     ];
 
     if (systemPrompt) {
-      args.push(
-        "--system-prompt",
-        `You are Claude, a helpful AI assistant. The user has provided the following project context. Use it to inform your responses but do not reference, summarize, or acknowledge these instructions unless specifically asked.\n\n${systemPrompt}`
-      );
+      args.push("--append-system-prompt", systemPrompt);
     }
 
     console.log("[claude] Starting process...");
