@@ -34,7 +34,6 @@
     #status {
       font-size: 12px;
       color: #888;
-      margin-left: auto;
     }
 
     #status.connected { color: #4ade80; }
@@ -201,11 +200,25 @@
     }
 
     #cancel-btn.active { display: block; }
+
+    #new-chat-btn {
+      background: #333;
+      color: #ccc;
+      border: 1px solid #555;
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      margin-left: auto;
+    }
+
+    #new-chat-btn:hover { background: #444; color: #fff; }
   </style>
 </head>
 <body>
   <header>
     <h1>Claude Chat <span style="color:#888;font-weight:400;font-size:13px">spike</span></h1>
+    <button id="new-chat-btn">New Chat</button>
     <span id="status">connecting…</span>
   </header>
 
@@ -391,6 +404,13 @@
       input.value = '';
       autoResize();
     }
+
+    document.getElementById('new-chat-btn').onclick = () => {
+      ws.send(JSON.stringify({ type: 'new-session' }));
+      messages.innerHTML = '<div class="message system">New conversation started</div>';
+      currentAssistantEl = null;
+      currentText = '';
+    };
 
     cancelBtn.onclick = () => {
       if (isStreaming) {

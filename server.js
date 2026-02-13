@@ -15,6 +15,7 @@ app.use(express.static(join(__dirname, "public")));
 wss.on("connection", (ws) => {
   console.log("Client connected");
   let activeProcess = null;
+  let sessionId = null;
 
   ws.on("message", (raw) => {
     const msg = JSON.parse(raw);
@@ -23,6 +24,12 @@ wss.on("connection", (ws) => {
       activeProcess.kill("SIGINT");
       activeProcess = null;
       ws.send(JSON.stringify({ type: "done" }));
+      return;
+    }
+
+    if (msg.type === "new-session") {
+      sessionId = null;
+      ws.send(JSON.stringify({ type: "session-cleared" }));
       return;
     }
 
@@ -46,9 +53,9 @@ wss.on("connection", (ws) => {
         args.push("--append-system-prompt", msg.systemPrompt);
       }
 
-      // Resume session if provided
-      if (msg.sessionId) {
-        args.push("--resume", msg.sessionId);
+      // Resume existing session for conversation continuity
+      if (sessionId) {
+        args.push("--resume", sessionId);
       }
 
       console.log(`Spawning claude: ${msg.prompt.slice(0, 50)}...`);
@@ -75,6 +82,11 @@ wss.on("connection", (ws) => {
           if (!line.trim()) continue;
           try {
             const event = JSON.parse(line);
+            // Capture session ID from init event
+            if (event.type === "system" && event.session_id) {
+              sessionId = event.session_id;
+              console.log(`[session] ${sessionId}`);
+            }
             ws.send(JSON.stringify(event));
           } catch {
             console.log(`[parse-fail] ${line.slice(0, 100)}`);
