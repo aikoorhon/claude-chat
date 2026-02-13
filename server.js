@@ -59,6 +59,7 @@ wss.on("connection", (ws) => {
       });
 
       activeProcess = proc;
+      proc.stdin.end();
 
       let buffer = "";
 
