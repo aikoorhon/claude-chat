@@ -34,12 +34,11 @@ wss.on("connection", (ws) => {
       }
 
       const args = [
-        "-y",
-        "@anthropic-ai/claude-code",
         "-p",
         msg.prompt,
         "--output-format",
         "stream-json",
+        "--verbose",
       ];
 
       // Add system prompt if provided
@@ -54,9 +53,10 @@ wss.on("connection", (ws) => {
 
       console.log(`Spawning claude: ${msg.prompt.slice(0, 50)}...`);
 
-      const proc = spawn("npx", args, {
+      const proc = spawn("claude", args, {
         env: { ...process.env, FORCE_COLOR: "0" },
         stdio: ["pipe", "pipe", "pipe"],
+        shell: true,
       });
 
       activeProcess = proc;
